@@ -55,6 +55,10 @@ ubpf_create(void)
 
     vm->first_mem_node = NULL;
 
+    // will be filled in ubpf_load
+    vm->extra_mem_size = 0;
+    vm->extra_mem_start = NULL;
+
     return vm;
 }
 
@@ -131,6 +135,9 @@ ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg
             *errmsg = ubpf_error("out of memory");
             return -1;
         }
+
+        vm->extra_mem_start = (void *) memory_ptr;
+        vm->extra_mem_size = memory_size;
 
         rewrite_with_memchecks(vm, code, code_len/8, errmsg, memory_ptr, memory_size, num_load_store, rewrite_pcs);
         vm->num_insts = code_len/sizeof(vm->insts[0]) + (ADDED_LOAD_STORE_INSTS * num_load_store);
@@ -968,16 +975,23 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
 }
 
 static bool
-bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_t cur_pc, void *mem, size_t mem_len, void *stack)
-{
+bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_t cur_pc, void *mem, size_t mem_len,
+             void *stack) {
     if (mem && (addr >= mem && (addr + size) <= (mem + mem_len))) {
         /* Context access */
+        return true;
+    } else if (vm->extra_mem_size != 0 && // compare only if this VM contains extra memory
+               (addr >= vm->extra_mem_start && (addr + size) <= (vm->extra_mem_start + vm->extra_mem_size))
+            ) {
+        /* Extra memory access */
         return true;
     } else if (addr >= stack && (addr + size) <= (stack + STACK_SIZE)) {
         /* Stack access */
         return true;
     } else {
-        snprintf(vm->error_msg, MAX_ERROR_MSG, "uBPF error: out of bounds memory %s at PC %u, addr %p, size %d\nmem %p/%zd stack %p/%d\n", type, cur_pc, addr, size, mem, mem_len, stack, STACK_SIZE);
+        snprintf(vm->error_msg, MAX_ERROR_MSG,
+                 "uBPF error: out of bounds memory %s at PC %u, addr %p, size %d\nmem %p/%zd stack %p/%d\n", type,
+                 cur_pc, addr, size, mem, mem_len, stack, STACK_SIZE);
         fprintf(stderr, "%s", vm->error_msg);
         return false;
     }
