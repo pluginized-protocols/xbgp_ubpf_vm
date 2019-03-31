@@ -27,7 +27,7 @@
 #define MAX_EXT_FUNCS 128
 #define OOB_CALL 0x3f
 #define MAX_LOAD_STORE 2048
-#define ADDED_LOAD_STORE_INSTS 20
+#define ADDED_LOAD_STORE_INSTS 22
 
 static bool validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg, uint32_t *num_load_store, int *rewrite_pcs);
 static bool rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg, uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, int *rewrite_pcs);
@@ -130,7 +130,7 @@ ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg
     }
 
     if (memory_ptr != 0 && memory_size != 0) {
-        vm->insts = malloc(code_len + (8 * ADDED_LOAD_STORE_INSTS) * num_load_store); /* 20 instructions by memcheck */
+        vm->insts = malloc(code_len + (8 * ADDED_LOAD_STORE_INSTS) * num_load_store); /* 22 instructions by memcheck */
         if (vm->insts == NULL) {
             *errmsg = ubpf_error("out of memory");
             return -1;
@@ -843,7 +843,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
         case EBPF_OP_LDXB:
         case EBPF_OP_LDXDW:
             if (inst.src != 10) {
-                /* Adding 20 instructions checking bounds */
+                /* Adding 22 instructions checking bounds */
                 /* Step 1: check that the accessed pointer is >= memory_ptr */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_LDDW, .dst = 11, .src = 0, .offset = 0, .imm = memory_ptr_top & UINT32_MAX};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = 0, .dst = 0, .src = 0, .offset = 0, .imm = memory_ptr_top >> 32};
@@ -871,6 +871,9 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = 0, .dst = 0, .src = 0, .offset = 0, .imm = memory_ptr >> 32};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_MOV64_REG, .dst = 3, .src = 10, .offset = 0, .imm = 0};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_CALL, .dst = 0, .src = 0, .offset = 0, .imm = OOB_CALL};
+                // EXIT CODE UINT64_MAX
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_LDDW, .dst = 0, .src = 0, .offset = 0, .imm = UINT32_MAX};
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = 0, .dst = 0, .src = 0, .offset = 0, .imm = UINT32_MAX};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_EXIT, .dst = 0, .src = 0, .offset = 0, .imm = 0};
             }
             /* And eventually add the load */
@@ -886,7 +889,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
         case EBPF_OP_STXB:
         case EBPF_OP_STXDW:
             if (inst.dst != 10) {
-                /* Adding 20 instructions checking bounds */
+                /* Adding 22 instructions checking bounds */
                 /* Step 1: check that the accessed pointer is >= memory_ptr */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_LDDW, .dst = 11, .src = 0, .offset = 0, .imm = memory_ptr_top & UINT32_MAX};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = 0, .dst = 0, .src = 0, .offset = 0, .imm = memory_ptr_top >> 32};
@@ -914,6 +917,9 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = 0, .dst = 0, .src = 0, .offset = 0, .imm = memory_ptr >> 32};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_MOV64_REG, .dst = 3, .src = 10, .offset = 0, .imm = 0};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_CALL, .dst = 0, .src = 0, .offset = 0, .imm = OOB_CALL};
+                // EXIT CODE UINT64_MAX
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_LDDW, .dst = 0, .src = 0, .offset = 0, .imm = UINT32_MAX};
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = 0, .dst = 0, .src = 0, .offset = 0, .imm = UINT32_MAX};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_EXIT, .dst = 0, .src = 0, .offset = 0, .imm = 0};
             }
             /* And eventually add it */
@@ -977,11 +983,14 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
 static bool
 bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_t cur_pc, void *mem, size_t mem_len,
              void *stack) {
-    if (mem && (addr >= mem && (addr + size) <= (mem + mem_len))) {
-        /* Context access */
+
+    /*if (mem && (addr >= mem && (addr + size) <= (mem + mem_len))) {
+        // Context access
+        fprintf(stderr, "context access ?\n");
         return true;
-    } else if (vm->extra_mem_size != 0 && // compare only if this VM contains extra memory
-               (addr >= vm->extra_mem_start && (addr + size) <= (vm->extra_mem_start + vm->extra_mem_size))
+    } else */ // disallowing this for the moment
+    if (vm->extra_mem_size != 0 && // compare only if this VM contains extra memory
+               (addr >= vm->extra_mem_start && (addr + size) < (vm->extra_mem_start + vm->extra_mem_size))
             ) {
         /* Extra memory access */
         return true;
