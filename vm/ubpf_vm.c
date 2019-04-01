@@ -853,7 +853,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
                 /* We failed the test, jump to the error */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JA, .dst = 0, .src = 0, .offset = 1, .imm = 0};
                 /* Step 2: check that the accessed pointer - memory_size <= memory_ptr */
-                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JLE_IMM, .dst = 11, .src = 0, .offset = 13, .imm = memory_size};
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JLE_IMM, .dst = 11, .src = 0, .offset = 15, .imm = memory_size};
                 /* We failed one of the tests for the store, but maybe we try to access the stack from another register than R10? */
                 /* Step 3: check that the accessed pointer is <= stack_ptr */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_MOV64_REG, .dst = 11, .src = inst.src, .offset = 0, .imm = 0};
@@ -863,7 +863,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JA, .dst = 0, .src = 0, .offset = 2, .imm = 0};
                 /* Step 4: check that the accessed pointer + stack_size >= stack_ptr */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_ADD64_IMM, .dst = 11, .src = 0, .offset = 0, .imm = STACK_SIZE};
-                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JGE_REG, .dst = 11, .src = 10, .offset = 7, .imm = 0};
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JGE_REG, .dst = 11, .src = 10, .offset = 9, .imm = 0};
                 /* We failed one of the tests, log the error and exits */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_MOV64_REG, .dst = 1, .src = inst.src, .offset = 0, .imm = 0};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_ADD64_IMM, .dst = 1, .src = 0, .offset = 0, .imm = (int32_t) inst.offset};
@@ -899,7 +899,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
                 /* We failed the test, jump to the error */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JA, .dst = 0, .src = 0, .offset = 1, .imm = 0};
                 /* Step 2: check that the accessed pointer - memory_size <= memory_ptr */
-                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JLE_IMM, .dst = 11, .src = 0, .offset = 13, .imm = memory_size};
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JLE_IMM, .dst = 11, .src = 0, .offset = 15, .imm = memory_size};
                 /* We failed one of the tests for the store, but maybe we try to access the stack from another register than R10? */
                 /* Step 3: check that the accessed pointer is <= stack_ptr */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_MOV64_REG, .dst = 11, .src = inst.dst, .offset = 0, .imm = 0};
@@ -909,7 +909,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JA, .dst = 0, .src = 0, .offset = 2, .imm = 0};
                 /* Step 4: check that the accessed pointer + stack_size >= stack_ptr */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_ADD64_IMM, .dst = 11, .src = 0, .offset = 0, .imm = STACK_SIZE};
-                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JGE_REG, .dst = 11, .src = 10, .offset = 7, .imm = 0};
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_JGE_REG, .dst = 11, .src = 10, .offset = 9, .imm = 0};
                 /* We failed one of the tests, log the error and exits */
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_MOV64_REG, .dst = 1, .src = inst.dst, .offset = 0, .imm = 0};
                 vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_ADD64_IMM, .dst = 1, .src = 0, .offset = 0, .imm = (int32_t) inst.offset};
