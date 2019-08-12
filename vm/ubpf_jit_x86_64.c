@@ -34,7 +34,7 @@
 static void muldivmod(struct jit_state *state, uint16_t pc, uint8_t opcode, int src, int dst, int32_t imm);
 
 /* Create R11 to perform memory bounds checks */
-#define REGISTER_MAP_SIZE 12
+#define REGISTER_MAP_SIZE 13
 static int register_map[REGISTER_MAP_SIZE] = {
     RAX,
     RDI,
@@ -48,6 +48,7 @@ static int register_map[REGISTER_MAP_SIZE] = {
     R15,
     RBP,
     RCX,
+    R12,
 };
 
 /* Return the x86 register for the given eBPF register */
@@ -86,6 +87,7 @@ translate(struct ubpf_vm *vm, struct jit_state *state, char **errmsg)
 {
     emit_push(state, RBP);
     emit_push(state, RBX);
+    emit_push(state, R12);
     emit_push(state, R13);
     emit_push(state, R14);
     emit_push(state, R15);
@@ -436,6 +438,7 @@ translate(struct ubpf_vm *vm, struct jit_state *state, char **errmsg)
     emit_pop(state, R15);
     emit_pop(state, R14);
     emit_pop(state, R13);
+    emit_pop(state, R12);
     emit_pop(state, RBX);
     emit_pop(state, RBP);
 
