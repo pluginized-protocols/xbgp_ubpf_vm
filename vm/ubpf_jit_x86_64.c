@@ -48,7 +48,7 @@ static int register_map[REGISTER_MAP_SIZE] = {
     R15,
     RBP,
     RCX,
-    R12,
+    R12, /* preserved register */
 };
 
 /* Return the x86 register for the given eBPF register */
@@ -363,8 +363,10 @@ translate(struct ubpf_vm *vm, struct jit_state *state, char **errmsg)
             break;
         case EBPF_OP_CALL:
             /* We reserve RCX for shifts */
+            emit_push(state, R12);
             emit_mov(state, R9, RCX);
             emit_call(state, vm->ext_funcs[inst.imm]);
+            emit_pop(state, R12);
             break;
         case EBPF_OP_EXIT:
             if (i != vm->num_insts - 1) {
