@@ -47,7 +47,7 @@ static int register_map[REGISTER_MAP_SIZE] = {
     R14,
     R15,
     RBP,
-    RCX,
+    R10,
     R12, /* preserved register */
 };
 
