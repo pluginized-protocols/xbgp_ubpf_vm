@@ -26,15 +26,22 @@
 
 #define MAX_EXT_FUNCS 128
 #define OOB_CALL 0x3f
+#define NEXT_CALL 0x7f
 #define MAX_LOAD_STORE 2048
 #define ADDED_LOAD_STORE_INSTS 22
 #define ADDED_CTX_CALL 12
+#define ADDED_NEXT_EXIT_CALL 1
 #define MAX_CALL 2048
+#define MAX_EXIT_CALL 2048
 
 static bool validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg, uint32_t *num_load_store, int *rewrite_pcs);
 static bool rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg, uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, int *rewrite_pcs);
 static bool bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_t cur_pc, void *mem, size_t mem_len, void *stack);
-static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg, uint64_t ctx_id);
+
+static bool
+rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg, uint64_t ctx_id);
+
+static bool rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg);
 
 struct ubpf_vm *
 ubpf_create(void)
@@ -112,10 +119,12 @@ ubpf_lookup_registered_function(struct ubpf_vm *vm, const char *name)
 }
 
 int
-ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg, uint64_t memory_ptr, uint32_t memory_size, uint64_t ctx_id)
+ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg, uint64_t memory_ptr,
+          uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite)
 {
     *errmsg = NULL;
     uint32_t num_load_store = 0;
+    struct ebpf_inst *code_ptr;
     int rewrite_pcs[MAX_LOAD_STORE];
 
     if (vm->insts) {
@@ -152,17 +161,27 @@ ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg
         }
 
         memcpy(vm->insts, code, code_len);
-        vm->num_insts = code_len/sizeof(vm->insts[0]);
+        vm->num_insts = code_len / sizeof(vm->insts[0]);
     }
 
-    if(ctx_id != 0) {
-        struct ebpf_inst *code_ptr = vm->insts;
-        if (!rewrite_with_ctx(vm, code_ptr, vm->num_insts, errmsg, ctx_id)) {
+    // before adding the context
+    if (call_next_rewrite) {
+        // exit when next is called, whatever the operation after.
+        code_ptr = vm->insts;
+        if (!rewrite_with_next_call(vm, code_ptr, vm->num_insts, errmsg)) {
             return -1;
         }
         free(code_ptr);
     }
 
+    // add context to the Bytecode
+    if (ctx_id != 0) {
+        code_ptr = vm->insts;
+        if (!rewrite_with_ctx(vm, code_ptr, vm->num_insts, errmsg, ctx_id)) {
+            return -1;
+        }
+        free(code_ptr);
+    }
     return 0;
 }
 
@@ -642,7 +661,7 @@ validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_i
         return false;
     }
 
-    int i;
+    uint32_t i;
     for (i = 0; i < num_insts; i++) {
         struct ebpf_inst inst = insts[i];
         bool store = false;
@@ -853,7 +872,7 @@ static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, 
 
     struct ebpf_inst inst;
     uint32_t num_call = 0;
-    int rewrite_pcs[MAX_CALL];
+    uint32_t rewrite_pcs[MAX_CALL];
 
     uint16_t new_offset;
     uint32_t new_num_insts;
@@ -945,7 +964,7 @@ static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, 
 
                 new_offset = inst.offset;
                 if (inst.offset > 0) {
-                    for (int j = 0; j < num_call && rewrite_pcs[j] < i + 1 + inst.offset; j++) {
+                    for (uint32_t j = 0; j < num_call && rewrite_pcs[j] < i + 1 + inst.offset; j++) {
                         /* We should jump all loads/stores in range [ next_pc ; next_pc + offset [ */
                         if (rewrite_pcs[j] >= i + 1 && rewrite_pcs[j] < i + 1 + inst.offset) {
                             new_offset += ADDED_CTX_CALL;
@@ -953,7 +972,7 @@ static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, 
                     }
                 }
                 else if (inst.offset < 0) {
-                    for (int j = 0; j < num_call && rewrite_pcs[j] < i + 1; j++) {
+                    for (uint32_t j = 0; j < num_call && rewrite_pcs[j] < i + 1; j++) {
                         /* We should jump all loads/stores in range [ next_pc + offset ; next_pc [ */
                         /* Notice that here, offset is negative */
                         if (rewrite_pcs[j] >= i + 1 + inst.offset && rewrite_pcs[j] < i + 1) {
@@ -973,12 +992,115 @@ static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, 
 }
 
 static bool
-rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg, uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, int *rewrite_pcs)
-{
+rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg) {
+    int pc = 0;
+    uint32_t i;
+    struct ebpf_inst inst;
+    uint32_t rewrite_pcs[MAX_EXIT_CALL];
+    uint32_t num_call = 0;
+    uint16_t new_offset;
+    uint32_t new_num_insts;
+
+    for (i = 0; i < num_inst; i++) {
+        inst = insts[i];
+        switch (inst.opcode) {
+            case EBPF_OP_CALL:
+                if (inst.imm == NEXT_CALL) {
+                    rewrite_pcs[num_call] = i;
+                    num_call++;
+
+                    if (num_call >= MAX_EXIT_CALL) {
+                        *errmsg = "Too many exits (EBPF_OP_EXIT)";
+                        return false;
+                    }
+                } else if (inst.imm == -1) {
+                    *errmsg = "EBPF_OP_CALL has not yet been mapped to their IMM ID";
+                    return false;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    new_num_insts = vm->num_insts + (num_call * ADDED_NEXT_EXIT_CALL);
+
+    vm->insts = malloc(new_num_insts * 8);
+    if (!vm->num_insts) {
+        *errmsg = "Cannot allocate space for rewritten eBPF instructions";
+        return false;
+    }
+    vm->num_insts = new_num_insts;
+
+    for (i = 0; i < num_inst; i++) {
+        inst = insts[i];
+
+        switch (inst.opcode) {
+            case EBPF_OP_CALL:
+                vm->insts[pc++] = inst;
+                if (inst.imm == NEXT_CALL) {
+                    vm->insts[pc++] = (struct ebpf_inst) {.opcode = EBPF_OP_EXIT, .dst = 0, .src = 0, .offset = 0, .imm = 0};
+                }
+                break;
+            case EBPF_OP_JA:
+            case EBPF_OP_JEQ_REG:
+            case EBPF_OP_JEQ_IMM:
+            case EBPF_OP_JGT_REG:
+            case EBPF_OP_JGT_IMM:
+            case EBPF_OP_JGE_REG:
+            case EBPF_OP_JGE_IMM:
+            case EBPF_OP_JLT_REG:
+            case EBPF_OP_JLT_IMM:
+            case EBPF_OP_JLE_REG:
+            case EBPF_OP_JLE_IMM:
+            case EBPF_OP_JSET_REG:
+            case EBPF_OP_JSET_IMM:
+            case EBPF_OP_JNE_REG:
+            case EBPF_OP_JNE_IMM:
+            case EBPF_OP_JSGT_IMM:
+            case EBPF_OP_JSGT_REG:
+            case EBPF_OP_JSGE_IMM:
+            case EBPF_OP_JSGE_REG:
+            case EBPF_OP_JSLT_IMM:
+            case EBPF_OP_JSLT_REG:
+            case EBPF_OP_JSLE_IMM:
+            case EBPF_OP_JSLE_REG:
+                new_offset = inst.offset;
+                if (inst.offset > 0) {
+                    for (uint32_t j = 0; j < num_call && rewrite_pcs[j] < i + 1 + inst.offset; j++) {
+                        /* We should jump all loads/stores in range [ next_pc ; next_pc + offset [ */
+                        if (rewrite_pcs[j] >= i + 1 && rewrite_pcs[j] < i + 1 + inst.offset) {
+                            new_offset += ADDED_NEXT_EXIT_CALL;
+                        }
+                    }
+                } else if (inst.offset < 0) {
+                    for (uint32_t j = 0; j < num_call && rewrite_pcs[j] < i + 1; j++) {
+                        /* We should jump all loads/stores in range [ next_pc + offset ; next_pc [ */
+                        /* Notice that here, offset is negative */
+                        if (rewrite_pcs[j] >= i + 1 + inst.offset && rewrite_pcs[j] < i + 1) {
+                            new_offset -= ADDED_NEXT_EXIT_CALL;
+                        }
+                    }
+                }
+                /* And put the jump with the new offset */
+                vm->insts[pc++] = (struct ebpf_inst) {.opcode = inst.opcode, .dst = inst.dst, .src = inst.src, .offset = new_offset, .imm = inst.imm};
+
+                break;
+            default:
+                vm->insts[pc++] = inst;
+                break;
+        }
+    }
+    return true;
+}
+
+static bool
+rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg,
+                       uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, int *rewrite_pcs) {
     int pc = 0;
     uint64_t memory_ptr_top = memory_ptr + (uint64_t) memory_size;
 
-    int i;
+    uint32_t i;
     int16_t new_offset;
     for (i = 0; i < num_insts; i++) {
         struct ebpf_inst inst = insts[i];
@@ -1098,7 +1220,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
         case EBPF_OP_JSLE_REG:
             new_offset = inst.offset;
             if (inst.offset > 0) {
-                for (int j = 0; j < num_load_store && rewrite_pcs[j] < i + 1 + inst.offset; j++) {
+                for (uint32_t j = 0; j < num_load_store && rewrite_pcs[j] < i + 1 + inst.offset; j++) {
                     /* We should jump all loads/stores in range [ next_pc ; next_pc + offset [ */
                     if (rewrite_pcs[j] >= i + 1 && rewrite_pcs[j] < i + 1 + inst.offset) {
                         new_offset += ADDED_LOAD_STORE_INSTS;
@@ -1106,7 +1228,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
                 }
             }
             else if (inst.offset < 0) {
-                for (int j = 0; j < num_load_store && rewrite_pcs[j] < i + 1; j++) {
+                for (uint32_t j = 0; j < num_load_store && rewrite_pcs[j] < i + 1; j++) {
                     /* We should jump all loads/stores in range [ next_pc + offset ; next_pc [ */
                     /* Notice that here, offset is negative */
                     if (rewrite_pcs[j] >= i + 1 + inst.offset && rewrite_pcs[j] < i + 1) {
