@@ -44,7 +44,7 @@ struct ubpf_vm {
     static_mem_node_t *first_mem_node;
     /* If the VM crashes, indicates here why */
     char error_msg[MAX_ERROR_MSG];
-    void *extra_mem_start;
+    uint8_t *extra_mem_start;
     uint32_t extra_mem_size;
 };
 

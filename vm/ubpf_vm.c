@@ -34,18 +34,26 @@
 #define MAX_CALL 2048
 #define MAX_EXIT_CALL 2048
 
-static bool validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg, uint32_t *num_load_store, int *rewrite_pcs);
-static bool rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg, uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, int *rewrite_pcs);
-static bool bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_t cur_pc, void *mem, size_t mem_len, void *stack);
+static bool validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, const char **errmsg,
+                     uint32_t *num_load_store, unsigned int *rewrite_pcs);
 
 static bool
-rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg, uint64_t ctx_id);
+rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, const char **errmsg,
+                       uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, unsigned int *rewrite_pcs);
 
-static bool rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg);
+static bool
+bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_t cur_pc, void *mem, size_t mem_len,
+             void *stack);
+
+static bool
+rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, const char **errmsg,
+                 uint64_t ctx_id);
+
+static bool
+rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, const char **errmsg);
 
 struct ubpf_vm *
-ubpf_create(void)
-{
+ubpf_create(void) {
     struct ubpf_vm *vm = calloc(1, sizeof(*vm));
     if (vm == NULL) {
         return NULL;
@@ -119,13 +127,13 @@ ubpf_lookup_registered_function(struct ubpf_vm *vm, const char *name)
 }
 
 int
-ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg, uint64_t memory_ptr,
-          uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite)
+ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, const char **errmsg, uint64_t memory_ptr,
+          uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite, int add_memcheck_insts)
 {
     *errmsg = NULL;
     uint32_t num_load_store = 0;
     struct ebpf_inst *code_ptr;
-    int rewrite_pcs[MAX_LOAD_STORE];
+    unsigned int rewrite_pcs[MAX_LOAD_STORE];
 
     if (vm->insts) {
         *errmsg = ubpf_error("code has already been loaded into this VM");
@@ -151,8 +159,14 @@ ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg
         vm->extra_mem_start = (void *) memory_ptr;
         vm->extra_mem_size = memory_size;
 
-        rewrite_with_memchecks(vm, code, code_len/8, errmsg, memory_ptr, memory_size, num_load_store, rewrite_pcs);
-        vm->num_insts = code_len/sizeof(vm->insts[0]) + (ADDED_LOAD_STORE_INSTS * num_load_store);
+        if (add_memcheck_insts) {
+            rewrite_with_memchecks(vm, code, code_len / 8, errmsg, memory_ptr,
+                                   memory_size, num_load_store, rewrite_pcs);
+            vm->num_insts = code_len / sizeof(vm->insts[0]) + (ADDED_LOAD_STORE_INSTS * num_load_store);
+        } else {
+            memcpy(vm->insts, code, code_len);
+            vm->num_insts = code_len / sizeof(vm->insts[0]);
+        }
     } else {
         vm->insts = malloc(code_len);
         if (vm->insts == NULL) {
@@ -634,7 +648,8 @@ ubpf_exec_with_arg(struct ubpf_vm *vm, void *arg, void *mem, size_t mem_len)
 }
 
 static bool
-validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg, uint32_t *num_load_store, int *rewrite_pcs)
+validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, const char **errmsg,
+         uint32_t *num_load_store, unsigned int *rewrite_pcs)
 {
     if (num_insts >= MAX_INSTS) {
         *errmsg = ubpf_error("too many instructions (max %u)", MAX_INSTS);
@@ -649,7 +664,7 @@ validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_i
         return false;
     }*/
 
-    int exit_insts_index;
+    unsigned int exit_insts_index;
     for (exit_insts_index = 0; exit_insts_index < num_insts; exit_insts_index++) {
         if (insts[exit_insts_index].opcode == EBPF_OP_EXIT) {
             break;
@@ -865,7 +880,8 @@ validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_i
  * @param ctx_id eBPF context for this vm
  * @return
  */
-static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg, uint64_t ctx_id) {
+static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, const char **errmsg,
+                             uint64_t ctx_id) {
 
     int pc = 0;
     uint32_t i;
@@ -992,7 +1008,7 @@ static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, 
 }
 
 static bool
-rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg) {
+rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, const char **errmsg) {
     int pc = 0;
     uint32_t i;
     struct ebpf_inst inst;
@@ -1095,8 +1111,8 @@ rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
 }
 
 static bool
-rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg,
-                       uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, int *rewrite_pcs) {
+rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, const char **errmsg,
+                       uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, unsigned int *rewrite_pcs) {
     int pc = 0;
     uint64_t memory_ptr_top = memory_ptr + (uint64_t) memory_size;
 
@@ -1106,7 +1122,7 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
         struct ebpf_inst inst = insts[i];
 
         switch (inst.opcode) {
-        case EBPF_OP_LDXW:
+            case EBPF_OP_LDXW:
         case EBPF_OP_LDXH:
         case EBPF_OP_LDXB:
         case EBPF_OP_LDXDW:
@@ -1249,8 +1265,11 @@ rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
 }
 
 static bool
-bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_t cur_pc, void *mem, size_t mem_len,
-             void *stack) {
+bounds_check(struct ubpf_vm *vm, void *_addr, int size, const char *type, uint16_t cur_pc, void *mem, size_t mem_len,
+             void *_stack) {
+
+    uint8_t *addr = _addr;
+    uint8_t *stack = _stack;
 
     /*if (mem && (addr >= mem && (addr + size) <= (mem + mem_len))) {
         // Context access
@@ -1258,7 +1277,7 @@ bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_
         return true;
     } else */ // disallowing this for the moment
     if (vm->extra_mem_size != 0 && // compare only if this VM contains extra memory
-               (addr >= vm->extra_mem_start && (addr + size) < (vm->extra_mem_start + vm->extra_mem_size))
+        (addr >= vm->extra_mem_start && (addr + size) < (vm->extra_mem_start + vm->extra_mem_size))
             ) {
         /* Extra memory access */
         return true;

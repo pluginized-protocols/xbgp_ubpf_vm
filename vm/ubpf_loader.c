@@ -52,7 +52,7 @@ bounds_check(struct bounds *bounds, uint64_t offset, uint64_t size)
 
 int
 ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errmsg, uint64_t memory_ptr,
-              uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite)
+              uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite, int add_memcheck_insts)
 {
     struct bounds b = { .base=elf, .size=elf_size };
     void *text_copy = NULL;
@@ -264,7 +264,7 @@ ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errms
     }
 
     int rv = ubpf_load(vm, text_copy, sections[text_shndx].size, errmsg, memory_ptr, memory_size, ctx_id,
-                       call_next_rewrite);
+                       call_next_rewrite, add_memcheck_insts);
     free(text_copy);
     return rv;
 
