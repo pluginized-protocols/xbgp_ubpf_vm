@@ -145,9 +145,11 @@ ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, const char **
         return -1;
     }
 
-    if (!validate(vm, code, code_len/8, errmsg, &num_load_store, rewrite_pcs)) {
+    if (!validate(vm, code, code_len / 8, errmsg, &num_load_store, rewrite_pcs)) {
         return -1;
     }
+
+    vm->elf_insts = code_len / sizeof(vm->insts[0]);
 
     if (memory_ptr != 0 && memory_size != 0) {
         vm->insts = malloc(code_len + (8 * ADDED_LOAD_STORE_INSTS) * num_load_store); /* 22 instructions by memcheck */
