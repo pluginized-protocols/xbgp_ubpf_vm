@@ -91,12 +91,11 @@ ubpf_destroy(struct ubpf_vm *vm)
     free(vm->ext_func_names);
 
     static_mem_node_t *n = vm->first_mem_node;
-    static_mem_node_t *tmp;
-    while (n) {
-        tmp = n;
-        n = n->next;
-        free(tmp->ptr);
-        free(tmp);
+    static_mem_node_t *elt, *tmp;
+
+    DL_FOREACH_SAFE(n,elt,tmp) {
+        DL_DELETE(n,elt);
+        free(elt);
     }
     free(vm);
 }

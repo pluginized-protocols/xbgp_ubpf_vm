@@ -50,6 +50,10 @@ bounds_check(struct bounds *bounds, uint64_t offset, uint64_t size)
     return bounds->base + offset;
 }
 
+static int memnode_cmp(static_mem_node_t *a, static_mem_node_t *b) {
+    return a->elf_section_id - b->elf_section_id;
+}
+
 int
 ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errmsg, uint64_t memory_ptr,
               uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite, int add_memcheck_insts)
@@ -206,7 +210,27 @@ ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errms
                 }
                 const Elf64_Section ndx = sym->st_shndx;
                 const struct section *str_section = &sections[ndx];
-                const void *str_data = str_section->data;
+                // const void *str_data = str_section->data;
+
+                static_mem_node_t search = {
+                        .elf_section_id = ndx,
+                };
+
+                static_mem_node_t *elt = NULL;
+                DL_SEARCH(vm->first_mem_node, elt, &search, memnode_cmp);
+                if (!elt) {
+                    // allocate memory related to the data section
+                    elt = malloc(sizeof(*elt) + str_section->size);
+                    if (!elt) {
+                        *errmsg = ubpf_error("static_mem_node_t malloc error");
+                        goto error;
+                    }
+                    elt->elf_section_id = ndx;
+                    elt->size = str_section->size;
+                    memcpy(elt->data, str_section->data, str_section->size);
+                    DL_APPEND(vm->first_mem_node, elt);
+                }
+
 
                 uint64_t offset;
                 if (ELF64_ST_TYPE(sym->st_info) == STT_SECTION) {
@@ -222,27 +246,10 @@ ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errms
                     goto error;
                 }
 
-                const char *str_to_give = (char *) (str_data + offset);
+                const char *ptr = (char *) (elt->data + offset);
 
-                size_t size = strlen(str_to_give);
-                char *s = (char *) malloc((size + 1) * sizeof(char));
-                if (!s) {
-                    *errmsg = ubpf_error("str malloc error");
-                    goto error;
-                }
-                static_mem_node_t *n = (static_mem_node_t *) malloc(sizeof(static_mem_node_t));
-                if (!n) {
-                    *errmsg = ubpf_error("static_mem_node_t malloc error");
-                    goto error;
-                }
-                strncpy(s, str_to_give, size + 1);
-                n->ptr = s;
-                n->size = size + 1;
-                n->next = vm->first_mem_node;
-                vm->first_mem_node = n;
-
-                *(uint32_t *)(text_copy + r->r_offset + 4) = (uint32_t) ((uint64_t) n->ptr & 0xffffffff);
-                *(uint32_t *)(text_copy + r->r_offset + 12) = (uint32_t) ((uint64_t) n->ptr >> 32);
+                *(uint32_t *)(text_copy + r->r_offset + 4) = (uint32_t) ((uint64_t) ptr & 0xffffffff);
+                *(uint32_t *)(text_copy + r->r_offset + 12) = (uint32_t) ((uint64_t) ptr >> 32);
 
                 continue;
             }

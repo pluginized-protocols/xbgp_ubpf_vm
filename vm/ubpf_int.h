@@ -28,10 +28,13 @@
 struct ebpf_inst;
 typedef uint64_t (*ext_func)(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4);
 
+#include "utlist.h"
+
 typedef struct static_mem_node {
-    void *ptr;
+    struct static_mem_node *next, *prev;
+    int elf_section_id;
     size_t size;
-    struct static_mem_node *next;
+    uint8_t data[0];
 } static_mem_node_t;
 
 struct ubpf_vm {
