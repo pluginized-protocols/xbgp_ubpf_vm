@@ -1271,12 +1271,18 @@ bounds_check(struct ubpf_vm *vm, void *_addr, int size, const char *type, uint16
 
     uint8_t *addr = _addr;
     uint8_t *stack = _stack;
+    static_mem_node_t *elt;
 
-    /*if (mem && (addr >= mem && (addr + size) <= (mem + mem_len))) {
-        // Context access
-        fprintf(stderr, "context access ?\n");
+    /* .rodata access */
+    DL_FOREACH(vm->first_mem_node, elt) {
+        if (addr >= elt->data && ((addr + size) <= (elt->data + size))) {
+            return true;
+        }
+    }
+    if (mem && (_addr >= mem && ((_addr + size) <= (mem + mem_len)))) {
+        /* Context access */
         return true;
-    } else */ // disallowing this for the moment
+    } else
     if (vm->extra_mem_size != 0 && // compare only if this VM contains extra memory
         (addr >= vm->extra_mem_start && (addr + size) < (vm->extra_mem_start + vm->extra_mem_size))
             ) {
