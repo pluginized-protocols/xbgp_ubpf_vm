@@ -1275,7 +1275,7 @@ bounds_check(struct ubpf_vm *vm, void *_addr, int size, const char *type, uint16
 
     /* .rodata access */
     DL_FOREACH(vm->first_mem_node, elt) {
-        if (addr >= elt->data && ((addr + size) <= (elt->data + size))) {
+        if (addr >= elt->data && ((addr + size) <= (elt->data + elt->size))) {
             return true;
         }
     }
