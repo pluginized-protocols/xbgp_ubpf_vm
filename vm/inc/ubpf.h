@@ -51,7 +51,7 @@ int ubpf_register(struct ubpf_vm *vm, unsigned int idx, const char *name, void *
  * Returns 0 on success, -1 on error. In case of error a pointer to the error
  * message will be stored in 'errmsg' and should be freed by the caller.
  */
-int ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, const char **errmsg, uint64_t memory_ptr,
+int ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg, uint64_t memory_ptr,
               uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite, int add_memcheck_insts);
 
 /*

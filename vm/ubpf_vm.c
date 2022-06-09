@@ -23,6 +23,7 @@
 #include <inttypes.h>
 #include <sys/mman.h>
 #include "ubpf_int.h"
+#include <limits.h>
 
 #define MAX_EXT_FUNCS 128
 #define OOB_CALL 0x3f
@@ -34,11 +35,11 @@
 #define MAX_CALL 2048
 #define MAX_EXIT_CALL 2048
 
-static bool validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, const char **errmsg,
+static bool validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg,
                      uint32_t *num_load_store, unsigned int *rewrite_pcs);
 
 static bool
-rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, const char **errmsg,
+rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg,
                        uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, unsigned int *rewrite_pcs);
 
 static bool
@@ -46,11 +47,11 @@ bounds_check(struct ubpf_vm *vm, void *addr, int size, const char *type, uint16_
              void *stack);
 
 static bool
-rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, const char **errmsg,
+rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg,
                  uint64_t ctx_id);
 
 static bool
-rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, const char **errmsg);
+rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg);
 
 struct ubpf_vm *
 ubpf_create(void) {
@@ -122,11 +123,11 @@ ubpf_lookup_registered_function(struct ubpf_vm *vm, const char *name)
             return i;
         }
     }
-    return -1;
+    return UINT_MAX;
 }
 
 int
-ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, const char **errmsg, uint64_t memory_ptr,
+ubpf_load(struct ubpf_vm *vm, const void *code, uint32_t code_len, char **errmsg, uint64_t memory_ptr,
           uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite, int add_memcheck_insts)
 {
     *errmsg = NULL;
@@ -460,13 +461,13 @@ ubpf_exec_with_arg(struct ubpf_vm *vm, void *arg, void *mem, size_t mem_len)
          */
 #define BOUNDS_CHECK_LOAD(size) \
     do { \
-        if (!bounds_check(vm, (void *)reg[inst.src] + inst.offset, size, "load", cur_pc, mem, mem_len, stack)) { \
+        if (!bounds_check(vm, (uint8_t *)reg[inst.src] + inst.offset, size, "load", cur_pc, mem, mem_len, stack)) { \
             return UINT64_MAX; \
         } \
     } while (0)
 #define BOUNDS_CHECK_STORE(size) \
     do { \
-        if (!bounds_check(vm, (void *)reg[inst.dst] + inst.offset, size, "store", cur_pc, mem, mem_len, stack)) { \
+        if (!bounds_check(vm, (uint8_t *)reg[inst.dst] + inst.offset, size, "store", cur_pc, mem, mem_len, stack)) { \
             return UINT64_MAX; \
         } \
     } while (0)
@@ -530,7 +531,7 @@ ubpf_exec_with_arg(struct ubpf_vm *vm, void *arg, void *mem, size_t mem_len)
             pc += inst.offset;
             break;
         case EBPF_OP_JEQ_IMM:
-            if (reg[inst.dst] == inst.imm) {
+            if (reg[inst.dst] == (uint32_t) inst.imm) {
                 pc += inst.offset;
             }
             break;
@@ -590,7 +591,7 @@ ubpf_exec_with_arg(struct ubpf_vm *vm, void *arg, void *mem, size_t mem_len)
             }
             break;
         case EBPF_OP_JNE_IMM:
-            if (reg[inst.dst] != inst.imm) {
+            if (reg[inst.dst] != (uint32_t) inst.imm) {
                 pc += inst.offset;
             }
             break;
@@ -649,7 +650,7 @@ ubpf_exec_with_arg(struct ubpf_vm *vm, void *arg, void *mem, size_t mem_len)
 }
 
 static bool
-validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, const char **errmsg,
+validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg,
          uint32_t *num_load_store, unsigned int *rewrite_pcs)
 {
     if (num_insts >= MAX_INSTS) {
@@ -881,7 +882,7 @@ validate(const struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_i
  * @param ctx_id eBPF context for this vm
  * @return
  */
-static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, const char **errmsg,
+static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg,
                              uint64_t ctx_id) {
 
     int pc = 0;
@@ -904,7 +905,7 @@ static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, 
                 num_call++;
 
                 if(num_call >= MAX_CALL) {
-                    *errmsg = "Too many calls (EBPF_OP_CALL)";
+                    *errmsg = ubpf_error("Too many calls (EBPF_OP_CALL)");
                     return false;
                 }
                 break;
@@ -919,7 +920,7 @@ static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, 
 
     vm->insts = malloc(new_num_insts * 8);
     if(!vm->num_insts) {
-        *errmsg = "Cannot allocate space for rewritten eBPF instructions";
+        *errmsg = ubpf_error("Cannot allocate space for rewritten eBPF instructions");
         return false;
     }
     vm->num_insts = new_num_insts;
@@ -1009,7 +1010,7 @@ static bool rewrite_with_ctx(struct ubpf_vm *vm, const struct ebpf_inst *insts, 
 }
 
 static bool
-rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, const char **errmsg) {
+rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_inst, char **errmsg) {
     int pc = 0;
     uint32_t i;
     struct ebpf_inst inst;
@@ -1027,11 +1028,11 @@ rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
                     num_call++;
 
                     if (num_call >= MAX_EXIT_CALL) {
-                        *errmsg = "Too many exits (EBPF_OP_EXIT)";
+                        *errmsg = ubpf_error("Too many exits (EBPF_OP_EXIT)");
                         return false;
                     }
                 } else if (inst.imm == -1) {
-                    *errmsg = "EBPF_OP_CALL has not yet been mapped to their IMM ID";
+                    *errmsg = ubpf_error("EBPF_OP_CALL has not yet been mapped to their IMM ID");
                     return false;
                 }
                 break;
@@ -1044,7 +1045,7 @@ rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
 
     vm->insts = malloc(new_num_insts * 8);
     if (!vm->num_insts) {
-        *errmsg = "Cannot allocate space for rewritten eBPF instructions";
+        *errmsg = ubpf_error("Cannot allocate space for rewritten eBPF instructions");
         return false;
     }
     vm->num_insts = new_num_insts;
@@ -1112,7 +1113,7 @@ rewrite_with_next_call(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32
 }
 
 static bool
-rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, const char **errmsg,
+rewrite_with_memchecks(struct ubpf_vm *vm, const struct ebpf_inst *insts, uint32_t num_insts, char **errmsg __attribute__((unused)),
                        uint64_t memory_ptr, uint32_t memory_size, uint32_t num_load_store, unsigned int *rewrite_pcs) {
     int pc = 0;
     uint64_t memory_ptr_top = memory_ptr + (uint64_t) memory_size;
@@ -1279,7 +1280,7 @@ bounds_check(struct ubpf_vm *vm, void *_addr, int size, const char *type, uint16
             return true;
         }
     }
-    if (mem && (_addr >= mem && ((_addr + size) <= (mem + mem_len)))) {
+    if (mem && (_addr >= mem && (((char *)_addr + size) <= ((char *)mem + mem_len)))) {
         /* Context access */
         return true;
     } else

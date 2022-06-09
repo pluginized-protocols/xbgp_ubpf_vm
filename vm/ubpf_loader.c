@@ -23,6 +23,7 @@
 #include <inttypes.h>
 #include "ubpf_int.h"
 #include <elf.h>
+#include <limits.h>
 
 #define MAX_SECTIONS 32
 
@@ -44,10 +45,12 @@ struct section {
 static const void *
 bounds_check(struct bounds *bounds, uint64_t offset, uint64_t size)
 {
+    const uint8_t *base;
     if (offset + size > bounds->size || offset + size < offset) {
         return NULL;
     }
-    return bounds->base + offset;
+    base = bounds->base;
+    return base + offset;
 }
 
 static int memnode_cmp(static_mem_node_t *a, static_mem_node_t *b) {
@@ -59,7 +62,7 @@ ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errms
               uint32_t memory_size, uint64_t ctx_id, int call_next_rewrite, int add_memcheck_insts)
 {
     struct bounds b = { .base=elf, .size=elf_size };
-    void *text_copy = NULL;
+    uint8_t *text_copy = NULL;
     int i;
 
     const Elf64_Ehdr *ehdr = bounds_check(&b, 0, sizeof(*ehdr));
@@ -130,7 +133,7 @@ ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errms
     }
 
     /* Find first text section */
-    int text_shndx = 0;
+    unsigned int text_shndx = 0;
     for (i = 0; i < ehdr->e_shnum; i++) {
         const Elf64_Shdr *shdr = sections[i].shdr;
         if (shdr->sh_type == SHT_PROGBITS &&
@@ -186,7 +189,7 @@ ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errms
         struct section *strtab = &sections[symtab->shdr->sh_link];
         const char *strings = strtab->data;
 
-        int j;
+        unsigned int j;
         for (j = 0; j < rel->size/sizeof(Elf64_Rel); j++) {
             const Elf64_Rel *r = &rs[j];
 
@@ -279,7 +282,7 @@ ubpf_load_elf(struct ubpf_vm *vm, const void *elf, size_t elf_size, char **errms
             }
 
             unsigned int imm = ubpf_lookup_registered_function(vm, sym_name);
-            if (imm == -1) {
+            if (imm == UINT_MAX) {
                 *errmsg = ubpf_error("function '%s' not found", sym_name);
                 goto error;
             }
